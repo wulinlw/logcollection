@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -15,6 +16,7 @@ import (
 )
 
 var taskUrl string = "http://www.test.com/log_collection/backend/task.php"
+var logMaxLine int = 30
 
 type Task struct {
 	Id        json.Number `json:"id"`
@@ -25,6 +27,16 @@ type Task struct {
 	Last_line json.Number `json:"last_line"`
 	Last_time json.Number `json:"last_time"`
 	Describe  string      `json:"describe"`
+}
+type Log struct {
+	Aid           int64  //8
+	Ip            int64  //10
+	From          string //32
+	File_name     string //128
+	Crtime        int64  //10
+	Line          int64  //10
+	ContentLength int64  //10
+	Content       string
 }
 
 func main() {
@@ -45,16 +57,19 @@ func main() {
 		conn, err := net.Dial("tcp4", "127.0.0.1:5000")
 		checkError(err)
 		defer conn.Close()
-
-		for i := 1; ; i++ {
-			currentLine, err := readLine(bfio)
-			if err != nil {
+		//debug i <= 1
+		for i := 1; i <= 3; i++ {
+			chunkLog := readChunkLog(bfio, value.Separator)
+			currentLine := int(Last_line) + i - 1
+			str := pack(value, currentLine, chunkLog)
+			//fmt.Println(str)
+			if str == "" && str != "\n" {
 				break
 			}
 
-			sendLen, err := conn.Write([]byte(currentLine))
+			sendLen, err := conn.Write([]byte(str))
 			checkError(err)
-			fmt.Println(sendLen, currentLine)
+			fmt.Println(sendLen, str)
 		}
 
 	}
@@ -72,6 +87,7 @@ func checkError(err error) {
  */
 func seek(r *bufio.Reader, lineNum int) (h *bufio.Reader, err error) {
 	for i := 1; i < lineNum; i++ {
+		//fmt.Println("--")
 		_, err := r.ReadString(byte('\n'))
 		if err != nil {
 			log.Fatal(err)
@@ -82,13 +98,27 @@ func seek(r *bufio.Reader, lineNum int) (h *bufio.Reader, err error) {
 }
 
 /**
- * 读取一行数据
+ * 读取一条日志，可能是多行
  */
-func readLine(r *bufio.Reader) (string, error) {
-	currentLine, err := r.ReadString(byte('\n'))
-	//checkError(err)
-	//fmt.Println(currentLine)
-	return currentLine, err
+func readChunkLog(r *bufio.Reader, Separator string) string {
+	var chunkLog string
+	for i := 1; i <= logMaxLine; i++ {
+		currentLine, err := r.ReadString(byte('\n'))
+		chunkLog += currentLine
+		if err == io.EOF {
+			return chunkLog
+		}
+		if err != nil {
+			return chunkLog
+		}
+		re := regexp.MustCompile(Separator)
+		separatorExist := re.FindAllString(currentLine, 1)
+		if separatorExist != nil {
+			return chunkLog
+		}
+		//fmt.Println(currentLine)
+	}
+	return chunkLog
 }
 
 /**
@@ -153,4 +183,30 @@ func parseLogPath(task *[]Task) (t []Task) {
 		}
 	}
 	return *task
+}
+
+func pack(task Task, line int, chunkLog string) (str string) {
+	var log Log
+	log.Aid, _ = task.Id.Int64()
+	log.Ip, _ = task.Ip.Int64()
+	log.From = task.From
+	log.File_name = task.Path
+	log.Crtime = time.Now().Unix()
+	log.Line = int64(line)
+	log.ContentLength = int64(len(chunkLog))
+	log.Content = chunkLog
+	//fmt.Println(log)
+
+	str = fmt.Sprintf("%08d", log.Aid)
+	str += fmt.Sprintf("%010d", log.Ip)
+	str += fmt.Sprintf("%032s", log.From)
+	str += fmt.Sprintf("%0128s", log.File_name)
+	str += fmt.Sprintf("%010d", log.Crtime)
+	str += fmt.Sprintf("%010d", log.Line)
+	str += fmt.Sprintf("%010d", log.ContentLength)
+	str += log.Content
+
+	//fmt.Println(str)
+	return str
+
 }
