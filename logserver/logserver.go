@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,21 +30,35 @@ func main() {
 	defer l.Close()
 	db := initMysql()
 	defer db.Close()
-	//fmt.Printf("%+v", db)
+	//debug
+	db.Exec("TRUNCATE TABLE `127.0.0.1_yii`")
+	db.Exec("TRUNCATE TABLE `127.0.0.1_apache`")
+
+	var logs = make(chan Log, 30000)
 
 	for {
 		conn, err := l.Accept()
 		checkError(err)
 
-		// Handle connections in a new goroutine.
-		go handleRequest(conn, db)
-
+		go handleRequest(conn, db, logs)
 	}
 }
-func handleRequest(conn net.Conn, db *sql.DB) {
+
+/**
+ * 处理请求
+ * conn socket对象
+ * db 	数据库对象
+ * logs 结构化日志管道
+ *
+ */
+func handleRequest(conn net.Conn, db *sql.DB, logs chan Log) {
 	defer conn.Close()
+	go handleLog(logs, db)
+	buf := make([]byte, 10240)
+	container := make([]byte, 0)
+	var allBuf []byte
 	for {
-		buf := make([]byte, 10240)
+
 		reqLen, err := conn.Read(buf)
 		if err == io.EOF {
 			break
@@ -51,13 +66,60 @@ func handleRequest(conn net.Conn, db *sql.DB) {
 		if err != nil {
 			log.Fatal(err)
 		}
-
+		fmt.Println("\n\n\nmsglength", reqLen)
 		//fmt.Println(reqLen, string(buf[:reqLen]))
-		logStruct := unpack(string(buf[:reqLen]))
-		fmt.Println(logStruct)
-		writeLog(logStruct, db)
+		//logStruct := unpack(string(buf[:reqLen]))
+		//fmt.Println(logStruct)
+
+		if reqLen <= 10240 {
+
+			if len(container) != 0 {
+				allBuf = append(container, buf[:reqLen]...)
+				//fmt.Println("\n\n\n", string(allBuf[:208]), "\n\n\n")
+			} else {
+				allBuf = buf[:reqLen]
+			}
+
+			//var readedLen int = 0
+			//fmt.Println("\nallBuf:", string(allBuf), "\n")
+			for {
+
+				if len(allBuf[:]) < 208 {
+					container = allBuf[:]
+					break
+				} else if len(allBuf[:]) >= 208 {
+					contentLength, _ := strconv.Atoi(string(allBuf[198:208]))
+					fmt.Println(contentLength, len(allBuf[:]))
+					if contentLength == 0 {
+						//这里的调试信息 打印字符串出来，看下是否完整
+						//fmt.Println("\n\n contentLength(0):", len(allBuf[:]), string(allBuf), "\n\n")
+					}
+					if 208+contentLength > len(allBuf[:]) {
+						container = allBuf[:]
+						//fmt.Println("\n\n lastbuf:", len(allBuf[:]), string(allBuf), "\n\n")
+						break
+					}
+					//if 208+contentLength == len(allBuf[:]) {
+					//	fmt.Println("\n\n =====:", len(allBuf[:]), string(allBuf), "\n\n")
+					if false {
+						os.Exit(0)
+					}
+					//}
+					logStruct := unpack(string(allBuf[:208+contentLength]))
+					//fmt.Println("\n\n\n", logStruct.Line)
+					//debug
+					//logStruct.Content = ""
+					//fmt.Printf("%+v", logStruct)
+					allBuf = allBuf[208+contentLength:]
+					logs <- logStruct
+				}
+			}
+		} else {
+			log.Fatal("data too long")
+		}
 	}
 }
+
 func checkError(err error) {
 	if err != nil {
 		log.Fatal(err)
@@ -94,6 +156,11 @@ func unpack(str string) (logStruct Log) {
 	log.Content = str[208:]
 	//fmt.Println(str[188:198], contentLength)
 	//fmt.Printf("%+v", log)
+
+	//debug
+	if str[8:18] != "2130706433" || (int64(contentLength) != int64(len(str[208:]))) {
+		fmt.Println("\n\nerror Str", str)
+	}
 	return log
 }
 
@@ -101,6 +168,20 @@ func getTableName(log Log) (tableName string) {
 	//strings.Replace(log.)
 	tableName = inet_ntoa(log.Ip).String() + "_" + log.From
 	return tableName
+}
+
+func handleLog(logs chan Log, db *sql.DB) {
+	for {
+		select {
+		case logStruct := <-logs:
+			//do nothing
+			writeLog(logStruct, db)
+			//fmt.Println("c---->", logStruct)
+		default:
+			//warnning!
+			//fmt.Errorf("TASK_CHANNEL is full!")
+		}
+	}
 }
 
 func writeLog(log Log, db *sql.DB) {
@@ -114,21 +195,16 @@ func writeLog(log Log, db *sql.DB) {
 	res, err := stmt.Exec(log.Aid, log.From, log.File_name, log.Crtime, log.Line, log.Content)
 	checkError(err)
 	if row, _ := res.LastInsertId(); row != 0 {
-		stmt, err := db.Prepare("update app set last_line=?,last_time=?")
+		stmt, err := db.Prepare("update app set last_line=last_line+?,last_time=? where ip=? and `from`=?")
 		defer stmt.Close()
 
 		checkError(err)
 		re := regexp.MustCompile(`\n`)
 		lines_arr := re.FindAllString(log.Content, -1)
 		lines := int64(len(lines_arr))
-		//fmt.Println(log.Content, lines)
-		var nextLine int64
-		if lines > 1 {
-			nextLine = log.Line + lines
-		} else {
-			nextLine = log.Line + 1
-		}
-		stmt.Exec(nextLine, log.Crtime)
+		//fmt.Println("logline", lines)
+
+		stmt.Exec(lines, log.Crtime, log.Ip, log.From)
 	}
 }
 

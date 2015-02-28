@@ -46,34 +46,41 @@ func main() {
 	fmt.Println(task)
 
 	for _, value := range task {
+		fmt.Println(value.Path)
 		file, err := os.Open(value.Path)
 		checkError(err)
 		defer file.Close()
 		bfio := bufio.NewReader(file)
 		Last_line, _ := value.Last_line.Int64()
-		bfio, err = seek(bfio, int(Last_line))
-		checkError(err)
+		bfio, err = seek(bfio, int(Last_line)+1)
+		if err == io.EOF {
+			continue
+		}
 
 		conn, err := net.Dial("tcp4", "127.0.0.1:5000")
 		checkError(err)
 		defer conn.Close()
 		//debug i <= 1
-		for i := 1; i <= 3; i++ {
-			chunkLog := readChunkLog(bfio, value.Separator)
-			currentLine := int(Last_line) + i - 1
+		for i := 1; ; i++ {
+			chunkLog, lines := readChunkLog(bfio, value.Separator)
+			if chunkLog == "" {
+				break
+			}
+			//fmt.Println(chunkLog)
+			currentLine := int(Last_line) + lines
+			Last_line += int64(lines) + 1
 			str := pack(value, currentLine, chunkLog)
 			//fmt.Println(str)
 			if str == "" && str != "\n" {
 				break
 			}
 
-			sendLen, err := conn.Write([]byte(str))
+			_, err := conn.Write([]byte(str))
+			fmt.Println(currentLine, len(str))
 			checkError(err)
-			fmt.Println(sendLen, str)
+			//fmt.Println(sendLen, str)
 		}
-
 	}
-
 }
 
 func checkError(err error) {
@@ -89,6 +96,9 @@ func seek(r *bufio.Reader, lineNum int) (h *bufio.Reader, err error) {
 	for i := 1; i < lineNum; i++ {
 		//fmt.Println("--")
 		_, err := r.ReadString(byte('\n'))
+		if err == io.EOF {
+			return r, err
+		}
 		if err != nil {
 			log.Fatal(err)
 			return r, err
@@ -100,25 +110,27 @@ func seek(r *bufio.Reader, lineNum int) (h *bufio.Reader, err error) {
 /**
  * 读取一条日志，可能是多行
  */
-func readChunkLog(r *bufio.Reader, Separator string) string {
-	var chunkLog string
+func readChunkLog(r *bufio.Reader, Separator string) (chunkLog string, lines int) {
+	//var chunkLog string
+	//var lines int = 0
 	for i := 1; i <= logMaxLine; i++ {
 		currentLine, err := r.ReadString(byte('\n'))
 		chunkLog += currentLine
 		if err == io.EOF {
-			return chunkLog
+			return chunkLog, lines
 		}
 		if err != nil {
-			return chunkLog
+			return chunkLog, lines
 		}
 		re := regexp.MustCompile(Separator)
 		separatorExist := re.FindAllString(currentLine, 1)
 		if separatorExist != nil {
-			return chunkLog
+			return chunkLog, lines
 		}
+		lines += 1
 		//fmt.Println(currentLine)
 	}
-	return chunkLog
+	return chunkLog, lines
 }
 
 /**
@@ -196,6 +208,10 @@ func pack(task Task, line int, chunkLog string) (str string) {
 	log.ContentLength = int64(len(chunkLog))
 	log.Content = chunkLog
 	//fmt.Println(log)
+
+	if log.Line > 1 {
+		log.Line += 1
+	}
 
 	str = fmt.Sprintf("%08d", log.Aid)
 	str += fmt.Sprintf("%010d", log.Ip)
