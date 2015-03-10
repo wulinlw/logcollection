@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"log"
 	"net"
-	"os"
+	//"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,11 +22,12 @@ type Log struct {
 	File_name     string //128
 	Crtime        int64  //10
 	Line          int64  //10
-	ContentLength int64  //10
+	ContentLength int64  //8
 	Content       string
 }
 
 func main() {
+
 	l, err := net.Listen("tcp", "127.0.0.1:5000")
 	checkError(err)
 	defer l.Close()
@@ -54,68 +57,61 @@ func main() {
 func handleRequest(conn net.Conn, db *sql.DB, logs chan Log) {
 	defer conn.Close()
 	go handleLog(logs, db)
-	buf := make([]byte, 10240)
-	container := make([]byte, 0)
-	var allBuf []byte
+	// 消息缓冲
+	msgbuf := bytes.NewBuffer(make([]byte, 0, 10240))
+	// 数据缓冲
+	databuf := make([]byte, 4096)
+	// 消息长度
+	length := 0
+	// 消息长度uint64
+	ulength := uint32(0)
+	// 数据循环
 	for {
-
-		reqLen, err := conn.Read(buf)
+		// 读取数据
+		n, err := conn.Read(databuf)
 		if err == io.EOF {
-			break
+			fmt.Printf("Client exit: %s\n", conn.RemoteAddr())
 		}
 		if err != nil {
-			log.Fatal(err)
+			fmt.Printf("Read error: %s\n", err)
+			return
 		}
-		fmt.Println("\n\n\nmsglength", reqLen)
-		//fmt.Println(reqLen, string(buf[:reqLen]))
-		//logStruct := unpack(string(buf[:reqLen]))
-		//fmt.Println(logStruct)
+		fmt.Println("databuf len:", n)
 
-		if reqLen <= 10240 {
+		// 数据添加到消息缓冲
+		n, err = msgbuf.Write(databuf[:n])
+		if err != nil {
+			fmt.Printf("Buffer write error: %s\n", err)
+			return
+		}
 
-			if len(container) != 0 {
-				allBuf = append(container, buf[:reqLen]...)
-				//fmt.Println("\n\n\n", string(allBuf[:208]), "\n\n\n")
-			} else {
-				allBuf = buf[:reqLen]
-			}
-
-			//var readedLen int = 0
-			//fmt.Println("\nallBuf:", string(allBuf), "\n")
-			for {
-
-				if len(allBuf[:]) < 208 {
-					container = allBuf[:]
-					break
-				} else if len(allBuf[:]) >= 208 {
-					contentLength, _ := strconv.Atoi(string(allBuf[198:208]))
-					fmt.Println(contentLength, len(allBuf[:]))
-					if contentLength == 0 {
-						//这里的调试信息 打印字符串出来，看下是否完整
-						//fmt.Println("\n\n contentLength(0):", len(allBuf[:]), string(allBuf), "\n\n")
-					}
-					if 208+contentLength > len(allBuf[:]) {
-						container = allBuf[:]
-						//fmt.Println("\n\n lastbuf:", len(allBuf[:]), string(allBuf), "\n\n")
-						break
-					}
-					//if 208+contentLength == len(allBuf[:]) {
-					//	fmt.Println("\n\n =====:", len(allBuf[:]), string(allBuf), "\n\n")
-					if false {
-						os.Exit(0)
-					}
-					//}
-					logStruct := unpack(string(allBuf[:208+contentLength]))
-					//fmt.Println("\n\n\n", logStruct.Line)
-					//debug
-					//logStruct.Content = ""
-					//fmt.Printf("%+v", logStruct)
-					allBuf = allBuf[208+contentLength:]
-					logs <- logStruct
+		// 消息分割循环
+		for {
+			// 消息头
+			if length == 0 && msgbuf.Len() >= 206 {
+				binary.Read(msgbuf, binary.LittleEndian, &ulength)
+				length = int(ulength)
+				fmt.Println(length)
+				//fmt.Println(msgbuf.String())
+				//contentLength, _ := strconv.Atoi(string(msgbuf.String()[198:206]))
+				//length = contentLength
+				//fmt.Println(contentLength, msgbuf.Len())
+				// 检查超长消息
+				if length > 10240 {
+					fmt.Printf("Message too length: %d\n", length)
+					return
 				}
 			}
-		} else {
-			log.Fatal("data too long")
+			//os.Exit(1)
+			// 消息体
+			if length > 0 && msgbuf.Len() >= length+206 {
+				//fmt.Printf("Client messge: %s\n", string(msgbuf.Next(length)))
+				log := unpack(string(msgbuf.Next(length)))
+				fmt.Printf("%+v", log)
+				length = 0
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -145,7 +141,7 @@ func unpack(str string) (logStruct Log) {
 	ip, _ := strconv.Atoi(str[8:18])
 	crtime, _ := strconv.Atoi(str[178:188])
 	line, _ := strconv.Atoi(str[188:198])
-	contentLength, _ := strconv.Atoi(str[198:208])
+	contentLength, _ := strconv.Atoi(str[198:206])
 	log.Aid = int64(id)
 	log.Ip = int64(ip)
 	log.From = strings.TrimLeft(str[18:50], "0")
@@ -153,14 +149,14 @@ func unpack(str string) (logStruct Log) {
 	log.Crtime = int64(crtime)
 	log.Line = int64(line)
 	log.ContentLength = int64(contentLength)
-	log.Content = str[208:]
+	log.Content = str[206:]
 	//fmt.Println(str[188:198], contentLength)
 	//fmt.Printf("%+v", log)
 
 	//debug
-	if str[8:18] != "2130706433" || (int64(contentLength) != int64(len(str[208:]))) {
-		fmt.Println("\n\nerror Str", str)
-	}
+	//if str[8:18] != "2130706433" || (int64(contentLength) != int64(len(str[206:]))) {
+	//	fmt.Println("\n\nerror Str", str)
+	//}
 	return log
 }
 

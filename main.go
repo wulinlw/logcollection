@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,7 +37,7 @@ type Log struct {
 	File_name     string //128
 	Crtime        int64  //10
 	Line          int64  //10
-	ContentLength int64  //10
+	ContentLength int64  //8
 	Content       string
 }
 
@@ -52,7 +54,12 @@ func main() {
 		defer file.Close()
 		bfio := bufio.NewReader(file)
 		Last_line, _ := value.Last_line.Int64()
-		bfio, err = seek(bfio, int(Last_line)+1)
+		if Last_line <= 1 {
+			Last_line = 1
+		} else {
+			Last_line = Last_line + int64(1)
+		}
+		bfio, err = seek(bfio, int(Last_line))
 		if err == io.EOF {
 			continue
 		}
@@ -60,22 +67,40 @@ func main() {
 		conn, err := net.Dial("tcp4", "127.0.0.1:5000")
 		checkError(err)
 		defer conn.Close()
+		msgbuf := bytes.NewBuffer(make([]byte, 0, 1024))
 		//debug i <= 1
 		for i := 1; ; i++ {
 			chunkLog, lines := readChunkLog(bfio, value.Separator)
 			if chunkLog == "" {
 				break
 			}
-			//fmt.Println(chunkLog)
-			currentLine := int(Last_line) + lines
-			Last_line += int64(lines) + 1
+
+			var currentLine int
+			if Last_line <= 1 {
+				currentLine = 1
+			} else {
+				currentLine = int(Last_line) + lines
+			}
+			fmt.Println("Last_line:", Last_line)
+			fmt.Println("read lines:", lines)
+			fmt.Println("currentLine:", currentLine)
+
 			str := pack(value, currentLine, chunkLog)
+			Last_line = int64(currentLine)
+			//str = "abc"
 			//fmt.Println(str)
 			if str == "" && str != "\n" {
 				break
 			}
 
-			_, err := conn.Write([]byte(str))
+			//var msgLen int = int(3)
+			msgLen := uint32(len(str))
+			binary.Write(msgbuf, binary.LittleEndian, msgLen)
+			fmt.Println(msgbuf.Bytes())
+			msgbuf.Write([]byte(str))
+			fmt.Println(str)
+			//_, err := conn.Write([]byte(str))
+			_, err := conn.Write(msgbuf.Next(4 + int(msgLen)))
 			fmt.Println(currentLine, len(str))
 			checkError(err)
 			//fmt.Println(sendLen, str)
@@ -122,12 +147,13 @@ func readChunkLog(r *bufio.Reader, Separator string) (chunkLog string, lines int
 		if err != nil {
 			return chunkLog, lines
 		}
+		lines += 1
 		re := regexp.MustCompile(Separator)
 		separatorExist := re.FindAllString(currentLine, 1)
 		if separatorExist != nil {
 			return chunkLog, lines
 		}
-		lines += 1
+
 		//fmt.Println(currentLine)
 	}
 	return chunkLog, lines
@@ -219,7 +245,7 @@ func pack(task Task, line int, chunkLog string) (str string) {
 	str += fmt.Sprintf("%0128s", log.File_name)
 	str += fmt.Sprintf("%010d", log.Crtime)
 	str += fmt.Sprintf("%010d", log.Line)
-	str += fmt.Sprintf("%010d", log.ContentLength)
+	str += fmt.Sprintf("%08d", log.ContentLength)
 	str += log.Content
 
 	//fmt.Println(str)
