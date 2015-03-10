@@ -55,10 +55,11 @@ func main() {
 		bfio := bufio.NewReader(file)
 		Last_line, _ := value.Last_line.Int64()
 		if Last_line <= 1 {
-			Last_line = 1
+			Last_line = 0
 		} else {
 			Last_line = Last_line + int64(1)
 		}
+		currentLine := Last_line
 		bfio, err = seek(bfio, int(Last_line))
 		if err == io.EOF {
 			continue
@@ -75,18 +76,15 @@ func main() {
 				break
 			}
 
-			var currentLine int
-			if Last_line <= 1 {
-				currentLine = 1
-			} else {
-				currentLine = int(Last_line) + lines
-			}
-			fmt.Println("Last_line:", Last_line)
-			fmt.Println("read lines:", lines)
-			fmt.Println("currentLine:", currentLine)
+			currentLine = currentLine + int64(lines)
+
+			//currentLine = currentLine + int64(lines)
+			//fmt.Println("Last_line:", Last_line)
+			//fmt.Println("read lines:", lines)
+			//fmt.Println("currentLine:", currentLine)
 
 			str := pack(value, currentLine, chunkLog)
-			Last_line = int64(currentLine)
+			//Last_line = currentLine + int64(lines)
 			//str = "abc"
 			//fmt.Println(str)
 			if str == "" && str != "\n" {
@@ -96,9 +94,9 @@ func main() {
 			//var msgLen int = int(3)
 			msgLen := uint32(len(str))
 			binary.Write(msgbuf, binary.LittleEndian, msgLen)
-			fmt.Println(msgbuf.Bytes())
+			//fmt.Println(msgbuf.Bytes())
 			msgbuf.Write([]byte(str))
-			fmt.Println(str)
+			//fmt.Println(str)
 			//_, err := conn.Write([]byte(str))
 			_, err := conn.Write(msgbuf.Next(4 + int(msgLen)))
 			fmt.Println(currentLine, len(str))
@@ -223,7 +221,7 @@ func parseLogPath(task *[]Task) (t []Task) {
 	return *task
 }
 
-func pack(task Task, line int, chunkLog string) (str string) {
+func pack(task Task, line int64, chunkLog string) (str string) {
 	var log Log
 	log.Aid, _ = task.Id.Int64()
 	log.Ip, _ = task.Ip.Int64()
@@ -235,9 +233,9 @@ func pack(task Task, line int, chunkLog string) (str string) {
 	log.Content = chunkLog
 	//fmt.Println(log)
 
-	if log.Line > 1 {
-		log.Line += 1
-	}
+	//if log.Line > 1 {
+	//	log.Line += 1
+	//}
 
 	str = fmt.Sprintf("%08d", log.Aid)
 	str += fmt.Sprintf("%010d", log.Ip)

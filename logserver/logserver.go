@@ -71,6 +71,7 @@ func handleRequest(conn net.Conn, db *sql.DB, logs chan Log) {
 		n, err := conn.Read(databuf)
 		if err == io.EOF {
 			fmt.Printf("Client exit: %s\n", conn.RemoteAddr())
+			//fmt.Println(msgbuf.Len(), msgbuf.String())
 		}
 		if err != nil {
 			fmt.Printf("Read error: %s\n", err)
@@ -104,10 +105,12 @@ func handleRequest(conn net.Conn, db *sql.DB, logs chan Log) {
 			}
 			//os.Exit(1)
 			// 消息体
-			if length > 0 && msgbuf.Len() >= length+206 {
+			if length > 0 && msgbuf.Len() >= length {
 				//fmt.Printf("Client messge: %s\n", string(msgbuf.Next(length)))
+				//fmt.Println(string(msgbuf.Next(length)))
 				log := unpack(string(msgbuf.Next(length)))
 				fmt.Printf("%+v", log)
+				logs <- log
 				length = 0
 			} else {
 				break
@@ -162,7 +165,7 @@ func unpack(str string) (logStruct Log) {
 
 func getTableName(log Log) (tableName string) {
 	//strings.Replace(log.)
-	tableName = inet_ntoa(log.Ip).String() + "_" + log.From
+	tableName = "log_" + inet_ntoa(log.Ip).String() + "_" + log.From
 	return tableName
 }
 
