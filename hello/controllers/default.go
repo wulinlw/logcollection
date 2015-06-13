@@ -35,15 +35,17 @@ func (this *MainController) Index() {
 	//this.Layout = "layout/layout.html"
 	//this.LayoutSections = make(map[string]string)
 	//this.LayoutSections["menu"] = "layout/menu.html"
-	layout()
 	//this.Ctx.WriteString("hello")
-	var l = models.LogModel
-	l.test()
+	layout(this)
+
+	models.Test()
+	models.Queryone()
+
 	this.TplNames = "main/test.tpl"
 }
 
 //设置layout
-func layout() {
+func layout(this *MainController) {
 	this.Layout = "layout/layout.html"
 	this.LayoutSections = make(map[string]string)
 	this.LayoutSections["menu"] = "layout/menu.html"
