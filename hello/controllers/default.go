@@ -38,9 +38,16 @@ func (this *MainController) Index() {
 	//this.Ctx.WriteString("hello")
 	layout(this)
 
-	models.Test()
-	models.Queryone()
+	//models.Test()
 
+	//models.Queryone()
+	maps := models.GetAllApp()
+	for k, v := range maps {
+		fmt.Println(k, v["from"])
+	}
+
+	this.Data["apps"] = maps
+	this.Data["a"] = "aaa"
 	this.TplNames = "main/test.tpl"
 }
 

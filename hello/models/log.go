@@ -6,6 +6,10 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+var (
+	Tb string = "log_tpl"
+)
+
 type LogModel struct {
 	Id        int
 	Aid       int
@@ -16,13 +20,21 @@ type LogModel struct {
 	Content   string
 }
 
-func (this *LogModel) TableName(tbn string) string {
-	return tbn
+func (this *LogModel) TableName() string {
+	return this.Tbn("default")
 }
 
 //func (this *LogModel) TableName() string {
 //	return "log_127.0.0.1_apache"
 //}
+
+func (this *LogModel) Tbn(tbn string) string {
+	//	if tbn == "default" {
+	//		Tb = "log_tpl"
+	//	}
+	fmt.Println(Tb)
+	return Tb
+}
 
 func init() {
 	orm.RegisterModel(new(LogModel))
@@ -39,32 +51,36 @@ func Test() {
 	var maps []orm.Params
 	num, _ := o.Raw("SELECT id FROM `log_127.0.0.1_apache` WHERE id = 12").Values(&maps)
 	if num > 0 {
-		fmt.Println(maps[0]["id"])
+		fmt.Println("==============>", maps[0]["id"])
+		for k, v := range maps {
+			fmt.Println(k, v["from"])
+		}
 	}
 }
 
-func Queryone() {
-	db, err := orm.GetDB()
-	if err != nil {
-		fmt.Println("get default DataBase")
-	}
-	fmt.Println(db)
-
+//获取所有app
+func GetAllApp() []orm.Params {
 	o := orm.NewOrm()
-	//	var r orm.RawSeter
-	//	r = o.Raw("SELECT id FROM `log_127.0.0.1_apache` WHERE id = 12")
-	//	var maps []orm.Params
-	//	r.Values(&maps)
-	//	fmt.Println(maps)
+	var maps []orm.Params
+	num, _ := o.Raw("SELECT * FROM `app`").Values(&maps)
+	if num > 0 {
+		//		fmt.Println("==============>", maps[0]["from"])
+		//		for k, v := range maps {
+		//			fmt.Println(k, v["from"])
+		//		}
+		return maps
+	}
+	return maps
+}
 
-	logs := new(LogModel)
-	logs.Aid = 1
-	logs.From = "apache"
-	logs.File_name = "test"
-	logs.Crtime = 123456789
-	logs.Line = 111
-	logs.Content = "test str"
-	logs.TableName("log_apache") //设置表名有问题
-	o.Insert(logs)
+//获取某一个app的某一页log
+func getAppLogPage(appid, page) {
+
+}
+
+//NewQueryBuilder稳定版不存在，属于开发分支
+func Queryone() {
+	//	var logs []LogModel
+	//	qb, _ := orm.NewQueryBuilder("mysql")
 
 }
