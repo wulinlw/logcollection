@@ -1,0 +1,9 @@
+package myfunc
+
+import (
+	"time"
+)
+
+func showTime(timeInt int) {
+	time.(timeInt, 0).String()
+}
